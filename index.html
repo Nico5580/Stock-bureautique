@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#4a78bf">
+<meta name="theme-color" content="#e0679a">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Stock Bureautique</title>
 <style>
@@ -14,8 +14,8 @@
     --paper:#f2efe9;
     --card:#ffffff;
     --line:#dcd6c9;
-    --accent:#3f5ca8;
-    --accent-dim:#93a6d6;
+    --accent:#c0447c;
+    --accent-dim:#e8a6c3;
     --warn:#a8492f;
     --ok:#3c7a5c;
     --mono: "SF Mono", ui-monospace, Menlo, monospace;
@@ -38,13 +38,13 @@
     flex:1 1 30%; min-width:0; padding:11px 6px; border-radius:10px; border:1px solid var(--line);
     background:var(--card); color:var(--ink); font-size:13px; font-weight:600; line-height:1.25;
   }
-  .exp-btn:active{background:#e4ebf8;}
+  .exp-btn:active{background:#fbe3ee;}
   .exp-btn[disabled]{opacity:0.5;}
 
   /* ---- Bandeau EAFC ---- */
   .brand{
     position:relative; color:#fff; overflow:hidden;
-    background:linear-gradient(165deg,#5296d5 0%,#4a78bf 55%,#4563ab 100%);
+    background:linear-gradient(165deg,#f08ab4 0%,#e0679a 55%,#c0447c 100%);
     padding:calc(env(safe-area-inset-top,0px) + 16px) 18px 0;
   }
   .brand::before{ /* grand cercle décoratif discret */
@@ -99,7 +99,7 @@
   .name-wrap{display:flex; align-items:center; gap:10px; flex:1; min-width:0;}
   .product-icon{
     flex-shrink:0; width:38px; height:38px; border-radius:10px;
-    background:#edf1fa; color:var(--accent);
+    background:#fdf0f6; color:var(--accent);
     display:flex; align-items:center; justify-content:center;
   }
   .product-icon svg{width:21px; height:21px;}
@@ -108,7 +108,7 @@
   .restant-badge{
     font-family:var(--mono); font-size:15px; font-weight:700;
     padding:3px 9px; border-radius:7px; white-space:nowrap;
-    background:#edf1fa; color:var(--ink);
+    background:#fdf0f6; color:var(--ink);
   }
   .restant-badge.low{background:#f7e6e0; color:var(--warn);}
   .restant-badge.zero{background:#f2dcd4; color:var(--warn);}
@@ -116,7 +116,7 @@
   .edit-btn{
     background:none; border:none; font-size:14px; cursor:pointer; padding:4px 6px; border-radius:8px; color:var(--muted,#7a7a7a);
   }
-  .edit-btn:active{background:#dfe8f5;}
+  .edit-btn:active{background:#f9dbe8;}
   .del-btn{
     background:none; border:none; color:#b9a99f; font-size:15px;
     width:22px; height:22px; display:flex; align-items:center; justify-content:center;
@@ -132,7 +132,7 @@
     font-size:18px; color:var(--accent); font-weight:600;
     display:flex; align-items:center; justify-content:center;
   }
-  .stepper button:active{background:#e4ebf8;}
+  .stepper button:active{background:#fbe3ee;}
   .stepper .count{
     min-width:34px; text-align:center; font-family:var(--mono);
     font-size:14px; border-left:1px solid var(--line); border-right:1px solid var(--line);
@@ -326,7 +326,7 @@
 <div id="printArea"></div>
 
 <script>
-const APP_VERSION = "v1.0 · 8 oct. 2026 · temps réel";
+const APP_VERSION = "v1.1 · 8 oct. 2026 · temps réel";
 const STORAGE_KEY = "stock-bureautique-v1";
 const API_URL_KEY = "stock-bureautique-apiurl";
 const USER_KEY = "stock-bureautique-user";
