@@ -133,6 +133,8 @@
     display:flex; align-items:center; justify-content:center;
   }
   .stepper button:active{background:#fbe3ee;}
+  .stepper button.plusn{width:42px; font-size:13px; border-left:1px solid var(--line);}
+  .stepper button.minusn{width:42px; font-size:13px; border-right:1px solid var(--line);}
   .stepper .count{
     min-width:34px; text-align:center; font-family:var(--mono);
     font-size:14px; border-left:1px solid var(--line); border-right:1px solid var(--line);
@@ -289,7 +291,7 @@
 </header>
 
 <main id="list"></main>
-<footer>Modifications synchronisées avec le Google Sheet partagé<br><span id="appVersion"></span></footer>
+<footer>Modifications synchronisées en temps réel entre les appareils<br><span id="appVersion"></span></footer>
 <div class="toast" id="toast"></div>
 
 <div class="sheet-backdrop" id="sheetBackdrop"></div>
@@ -326,14 +328,10 @@
 <div id="printArea"></div>
 
 <script>
-const APP_VERSION = "v1.2 · 8 oct. 2026 · temps réel";
+const APP_VERSION = "v5.8 · 14 oct. 2026 · temps réel";
 const STORAGE_KEY = "stock-bureautique-v1";
 const API_URL_KEY = "stock-bureautique-apiurl";
 const USER_KEY = "stock-bureautique-user";
-
-// URL du script Apps Script déployé — configurée d'office, pas besoin de la
-// coller manuellement. localStorage prend le dessus si un ⚙️ l'a changée.
-const DEFAULT_API_URL = ""; // pas d'ancien système : Firebase uniquement
 
 // Liste fermée des utilisateurs — pas de saisie libre, évite les fautes de
 // frappe et les noms fantaisistes dans l'historique.
@@ -353,14 +351,14 @@ const HISTORY_USERS = ["Nicolas"];
 const ADMIN_PIN = "1282";
 
 // ---- Base de données Firebase (temps réel) -----------------------------
-// Remplace Google Sheets + Apps Script pour la synchro : les modifications
+// Base propre au stock de bureau : les modifications
 // arrivent sur les autres appareils en moins d'une seconde (flux SSE), les
 // écritures sont confirmées par le serveur (réponse lisible, pas de no-cors).
 // Tant que l'adresse n'est pas renseignée, l'ancienne synchro reste utilisée.
 const FB_URL = (localStorage.getItem("stock-bureautique-fburl") || "https://stock-bureautique-default-rtdb.europe-west1.firebasedatabase.app").replace(/\/+$/, "");
 const USE_FB = /^https?:\/\//.test(FB_URL);
 
-let apiUrl = USE_FB ? FB_URL : (localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL);
+let apiUrl = USE_FB ? FB_URL : (localStorage.getItem(API_URL_KEY) || "");
 let syncPollTimer = null;
 
 function getUsername(){
@@ -702,82 +700,6 @@ function restantOf(p){
 
 const GET_TIMEOUT_MS = 20000;
 let lastApiError = "";      // dernière cause d'échec de lecture, affichée dans l'indicateur
-let lastSource = "";        // "feuille" (lecture directe) ou "script" (Apps Script)
-
-// ---- Lecture directe de la feuille Google -------------------------------
-// Le script Apps Script est lent (2 à 5 s) et échoue par moments (page
-// « introuvable » après 20-45 s) dès que plusieurs téléphones l'interrogent.
-// Les lectures de sondage passent donc par la feuille elle-même (≈ 0,3 s,
-// aucune charge sur le script), qui reste lisible par lien. Le script ne sert
-// plus qu'aux écritures. Si la lecture directe échoue (feuille rendue privée,
-// réseau…), on retombe automatiquement sur le script.
-const SHEET_ID = ""; // aucune feuille Google
-const SHEET_TAB = "Stock";
-const GVIZ_TIMEOUT_MS = 8000;
-let gvizBlockedUntil = 0;   // après un échec, on n'insiste pas pendant 1 min
-function gvizGet(force){
-  if(!SHEET_ID) return Promise.resolve(null);
-  // uniquement pour la feuille d'origine : un autre script = une autre feuille
-  // (force : lecture ponctuelle pour la migration vers Firebase)
-  if((!force && apiUrl !== DEFAULT_API_URL) || Date.now() < gvizBlockedUntil) return Promise.resolve(null);
-  return new Promise(resolve => {
-    const cb = "__gv" + Math.random().toString(36).slice(2);
-    const s = document.createElement("script");
-    let finished = false;
-    const finish = (val, why) => {
-      if(finished) return;
-      finished = true;
-      clearTimeout(to);
-      delete window[cb];
-      s.remove();
-      if(!val) gvizBlockedUntil = Date.now() + 60 * 1000;
-      if(!val && why) lastApiError = why;
-      resolve(val);
-    };
-    const to = setTimeout(() => finish(null, "lecture directe : délai dépassé"), GVIZ_TIMEOUT_MS);
-    window[cb] = (resp) => {
-      try{
-        const cols = resp && resp.table && resp.table.cols || [];
-        const rows = resp && resp.table && resp.table.rows || [];
-        if(resp.status !== "ok" || !cols.length || cols[0].label !== "name" || !rows.length){
-          return finish(null, "lecture directe : format inattendu");
-        }
-        const out = [];
-        rows.forEach(r => {
-          const c = r.c || [];
-          const name = c[0] && c[0].v;
-          if(name === null || name === undefined || name === "") return;
-          const base = c[1] && c[1].v;
-          const target = c[2] && c[2].v;
-          out.push({
-            name: String(name),
-            base: Number(base) || 0,
-            target: (target === null || target === undefined || target === "") ? null : Number(target)
-          });
-        });
-        finish(out.length ? out : null, "lecture directe : aucune ligne");
-      }catch(e){ finish(null, "lecture directe : erreur"); }
-    };
-    s.onerror = () => finish(null, "lecture directe : refusée");
-    // Page de connexion / d'erreur renvoyée à la place des données : le fichier
-    // se charge sans appeler notre fonction (la fonction est appelée pendant
-    // l'exécution du script, avant l'événement load). On n'attend pas le délai.
-    s.onload = () => setTimeout(() => finish(null, "lecture directe : refusée"), 0);
-    s.src = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?sheet=" +
-      encodeURIComponent(SHEET_TAB) + "&headers=1&tqx=" + encodeURIComponent("out:json;responseHandler:" + cb) +
-      "&_=" + Date.now();
-    document.head.appendChild(s);
-  });
-}
-
-// Lecture de sondage : feuille d'abord, script en repli.
-async function apiGetFast(){
-  const direct = await gvizGet();
-  if(direct){ lastSource = "feuille"; return direct; }
-  lastSource = "script";   // repli : le rythme de sondage ralentit pour ménager le script
-  return await apiGet();
-}
-
 // ---- Firebase : lecture, écriture, historique, migration -----------------
 // Clé d'un produit : son nom, rendu compatible avec les clés Firebase
 // (interdit : . $ # [ ] /). Le vrai nom est aussi stocké dans la valeur.
@@ -808,18 +730,6 @@ async function fbFetchJson(path, opts){
     }
     return {ok:true, data: await res.json()};
   } finally { clearTimeout(killer); }
-}
-
-async function legacyScriptGet(){
-  if(!DEFAULT_API_URL) return null;
-  const ctrl = new AbortController();
-  const killer = setTimeout(() => ctrl.abort(), GET_TIMEOUT_MS);
-  try{
-    const res = await fetch(DEFAULT_API_URL + "?_=" + Date.now(), {cache:"no-store", signal: ctrl.signal});
-    const data = await res.json();
-    return (data && data.ok) ? data.products : null;
-  }catch(e){ return null; }
-  finally{ clearTimeout(killer); }
 }
 
 // Première ouverture : la base est vide, on y envoie une fois les produits de
@@ -899,6 +809,9 @@ async function fbSend(payload){
   if(payload.action !== "delete"){
     entry.base = Number(payload.base) || 0;
     if(payload.target !== null && payload.target !== undefined && payload.target !== "") entry.target = Number(payload.target);
+    // variation exacte (+1, +N, −1, −N) : le relevé des entrées n'a plus à la deviner
+    if(Number.isInteger(payload.delta) && payload.delta !== 0) entry.delta = payload.delta;
+    if(payload.renamedFrom) entry.renamedFrom = String(payload.renamedFrom);
   }
   fetch(FB_URL + "/log.json", {method:"POST", keepalive:true, body: JSON.stringify(entry)}).catch(() => {});
 }
@@ -918,7 +831,9 @@ async function fbGetLog(limit){
         action: String(e.action || ""),
         name: String(e.name || ""),
         base: (e.base === undefined || e.base === null) ? null : Number(e.base),
-        target: (e.target === undefined || e.target === null) ? null : Number(e.target)
+        target: (e.target === undefined || e.target === null) ? null : Number(e.target),
+        delta: (e.delta === undefined || e.delta === null) ? null : Number(e.delta),
+        renamedFrom: e.renamedFrom ? String(e.renamedFrom) : null
       };
     });
   }catch(e){ return null; }
@@ -1081,12 +996,6 @@ const MAX_VERIFY_ATTEMPTS = 3; // includes the first send
 let writeGeneration = {};
 
 async function verifyWrite(payload){
-  // 1) lecture directe de la feuille : rapide, et c'est la vérité (ce qui est
-  //    réellement écrit). Si elle confirme, inutile de solliciter le script.
-  const fast = await gvizGet();
-  if(fast && writeMatches(fast, payload)) return true;
-  // 2) sinon (pas de lecture directe, ou valeur pas encore visible) : le script
-  //    tranche, comme avant.
   const products = await apiGet();
   if(!products) return null; // couldn't check right now — not a confirmed failure
   return writeMatches(products, payload);
@@ -1124,9 +1033,17 @@ async function sendAndVerify(payload, isStillCurrent){
   return false;
 }
 
-async function apiUpdate(name, base, target){
+async function apiUpdate(name, base, target, delta, extra){
   if(!apiUrl) return;
   const payload = {action:"update", name, base, target, user:getUsername()};
+  if(extra && extra.renamedFrom) payload.renamedFrom = String(extra.renamedFrom);
+  if(Number.isInteger(delta) && delta !== 0){
+    payload.delta = delta;
+    // une écriture précédente restée en file (non envoyée) est remplacée : on garde sa variation
+    const waiting = writeQueue.find(q => q.name === name && q.action !== "delete");
+    if(waiting && Number.isInteger(waiting.delta)) payload.delta += waiting.delta;
+    if(payload.delta === 0) delete payload.delta;
+  }
   noteActivity(); // modification locale : on sonde plus vite pendant quelques secondes
   pendingConfirms.add(name); // protect from mergeServerData until confirmed
   // cette écriture remplace toute ancienne en attente pour ce produit
@@ -1293,17 +1210,13 @@ function liveCard(p){
 // quand elle revient au premier plan. Juste après une activité (modification
 // faite ici, modification reçue d'un autre appareil, retour au premier plan),
 // on passe en rythme rapide pendant 20 s, puis on revient au rythme normal.
-// Lecture directe de la feuille (légère) : 4 s normal, 2 s rapide.
-// Repli sur le script Apps Script (lent, quota limité) : 10 s normal, 6 s rapide.
 const POLL_FAST_WINDOW_MS = 20000;
 let lastActivityAt = 0;
 function noteActivity(){ lastActivityAt = Date.now(); }
 function currentPollDelay(){
   if(USE_FB && writeQueue.length) return 3000; // envoi en attente : on réessaie vite
   if(USE_FB) return fbStreamOk ? 15000 : (Date.now() - lastActivityAt < POLL_FAST_WINDOW_MS ? 3000 : 5000);
-  const fast = Date.now() - lastActivityAt < POLL_FAST_WINDOW_MS;
-  if(lastSource === "script") return fast ? 6000 : 10000;
-  return fast ? 2000 : 4000;
+  return Date.now() - lastActivityAt < POLL_FAST_WINDOW_MS ? 6000 : 10000;
 }
 // L'intervalle est mesuré de début de requête à début de requête (la durée de
 // la requête est déduite de l'attente), avec 1 s minimum entre deux requêtes.
@@ -1356,11 +1269,11 @@ setInterval(updateSyncLabel, 2000);
 async function pollOnce(){
   if(document.hidden) return;
   // verrou déjà pris depuis trop longtemps : la requête précédente est perdue
-  if(pollBusy && Date.now() - pollStartedAt < GVIZ_TIMEOUT_MS + GET_TIMEOUT_MS + 5000) return;
+  if(pollBusy && Date.now() - pollStartedAt < GET_TIMEOUT_MS + 5000) return;
   pollBusy = true;
   pollStartedAt = Date.now();
   try{
-    const serverProducts = await apiGetFast();
+    const serverProducts = await apiGet();
     if(!serverProducts){ pollFailing = true; updateSyncLabel(); }
     if(serverProducts){
       lastSyncOkAt = Date.now();
@@ -1686,9 +1599,11 @@ function render(){
         <div style="display:flex; align-items:center;">
           <span class="stepper-label">Stock</span>
           <div class="stepper">
+            <button class="minusn" aria-label="retirer un nombre" title="Retirer un nombre">−N</button>
             <button class="minus" aria-label="moins">−</button>
             <span class="count restant-count">${restant}</span>
             <button class="plus" aria-label="plus">+</button>
+            <button class="plusn" aria-label="ajouter un nombre" title="Ajouter un nombre">+N</button>
           </div>
         </div>
         <div class="target-wrap">
@@ -1712,7 +1627,33 @@ function render(){
       updateCard(liveCard(p), p);
       saveDataDebounced();
       renderOrderBadge();
-      apiUpdate(p.name, p.base, p.target);
+      apiUpdate(p.name, p.base, p.target, 1);
+    });
+    card.querySelector(".plusn").addEventListener("click", async () => {
+      const v = await customPrompt(`Combien ajouter à "${esc(p.name)}" ?<br><small style="font-weight:400;color:#8a9497;">Stock actuel : ${p.base}</small>`, "");
+      if(v === null) return;
+      const n = parseInt(v, 10);
+      if(isNaN(n) || n <= 0){ showToast("Entre un nombre positif"); return; }
+      p.base += n;
+      updateCard(liveCard(p), p);
+      saveDataDebounced();
+      renderOrderBadge();
+      apiUpdate(p.name, p.base, p.target, n);
+      showToast(`+${n} → stock ${p.base}`);
+    });
+    card.querySelector(".minusn").addEventListener("click", async () => {
+      if(p.base <= 0){ showToast("Stock déjà à 0"); return; }
+      const v = await customPrompt(`Combien retirer à "${esc(p.name)}" ?<br><small style="font-weight:400;color:#8a9497;">Stock actuel : ${p.base}</small>`, "");
+      if(v === null) return;
+      const n = parseInt(v, 10);
+      if(isNaN(n) || n <= 0){ showToast("Entre un nombre positif"); return; }
+      if(n > p.base){ showToast(`Impossible : il n'y en a que ${p.base}`); return; }
+      p.base -= n;
+      updateCard(liveCard(p), p);
+      saveDataDebounced();
+      renderOrderBadge();
+      apiUpdate(p.name, p.base, p.target, -n);
+      showToast(`−${n} → stock ${p.base}`);
     });
     card.querySelector(".minus").addEventListener("click", async () => {
       if(p.base <= 0) return;
@@ -1722,7 +1663,7 @@ function render(){
       updateCard(liveCard(p), p);
       saveDataDebounced();
       renderOrderBadge();
-      apiUpdate(p.name, p.base, p.target);
+      apiUpdate(p.name, p.base, p.target, -1);
     });
     card.querySelector(".restant-count").addEventListener("click", async () => {
       const v = await customPrompt(`Nouveau stock pour "${esc(p.name)}"`, p.base);
@@ -1813,7 +1754,7 @@ function openRenameModal(p){
     render();
     renderOrderBadge();
     showToast("Produit renommé");
-    apiUpdate(newName, p.base, p.target).then(() => apiDelete(oldName));
+    apiUpdate(newName, p.base, p.target, undefined, {renamedFrom: oldName}).then(() => apiDelete(oldName));
   };
 }
 
@@ -2054,43 +1995,104 @@ function fmtDay(ts){
 }
 
 // Récapitulatif des entrées de stock (variations positives) par date, avec le stock d'avant
+let entriesPeriod = "today"; // today | week | all
+function periodStart(){
+  const d = new Date();
+  if(entriesPeriod === "all") return 0;
+  d.setHours(0,0,0,0);
+  if(entriesPeriod === "week") d.setDate(d.getDate() - 6);
+  return d.getTime();
+}
 function entriesDataset(log){
   const ts = e => { const t = new Date(e.timestamp).getTime(); return isNaN(t) ? 0 : t; };
   const asc = log.slice().sort((a, b) => ts(a) - ts(b));
   const last = {};
   const out = [];
+  const since = periodStart();
   let unknown = 0;
+  // Renommage = ajout du nouveau nom + suppression de l'ancien (même qui, même stock, à quelques secondes).
+  // Ce n'est pas une entrée de marchandise : on repère ces paires pour les ignorer.
+  const tmp = {}, dels = [];
+  asc.forEach(e => {
+    if(e.action === "suppression"){ dels.push({t: ts(e), user: e.user, base: tmp[e.name]}); delete tmp[e.name]; }
+    else if(e.base != null && !isNaN(e.base)) tmp[e.name] = Number(e.base);
+  });
+  // nouveaux journaux : l'appli note l'ancien nom (renamedFrom). Anciens journaux : paire ajout + suppression
+  // du même utilisateur (même stock à 2 min près, ou ancien produit jamais modifié donc stock inconnu : 1 min).
+  const isRename = e => e.action === "ajout" && (!!e.renamedFrom || dels.some(d => d.user === e.user && (
+    (d.base === Number(e.base) && Math.abs(d.t - ts(e)) <= 120000) ||
+    (d.base === undefined && Math.abs(d.t - ts(e)) <= 60000))));
   asc.forEach(e => {
     if(e.action === "suppression"){ delete last[e.name]; return; }
     if(e.base == null || isNaN(e.base)) return;
     const prev = last[e.name];
     const now = Number(e.base);
-    if(e.action === "ajout"){
-      if(now > 0) out.push({e, avant: 0, plus: now, note: "nouveau produit"});
+    const inPeriod = ts(e) >= since;
+    const hasDelta = e.delta != null && !isNaN(e.delta);
+    if(hasDelta){
+      // variation notée telle quelle par l'appli : exacte, sans dépendre du stock d'avant
+      if(Number(e.delta) > 0 && inPeriod) out.push({e, avant: now - Number(e.delta), plus: Number(e.delta), note: ""});
+    } else if(e.action === "ajout"){
+      if(now > 0 && inPeriod && !isRename(e)) out.push({e, avant: 0, plus: now, note: "nouveau produit"});
     } else if(prev !== undefined){
-      if(now > Number(prev)) out.push({e, avant: Number(prev), plus: now - Number(prev), note: ""});
-    } else {
+      if(now > Number(prev) && inPeriod) out.push({e, avant: Number(prev), plus: now - Number(prev), note: ""});
+    } else if(ts(e) >= since){
       unknown++;
     }
     last[e.name] = now;
   });
-  out.reverse();
-  const rows = out.map(o => [fmtDay(o.e.timestamp), o.e.name, o.avant, "+" + o.plus, o.avant + o.plus, o.e.user || "Inconnu", o.note]);
+  // regroupe par jour et par produit : plusieurs ajouts le même jour = une seule ligne totalisée
+  const grouped = [];
+  const idx = {};
+  out.forEach(o => {
+    const k = fmtDay(o.e.timestamp) + "|" + o.e.name;
+    if(idx[k] === undefined){ idx[k] = grouped.length; grouped.push({e: o.e, avant: o.avant, plus: 0, notes: new Set(), users: new Set(), n: 0}); }
+    const g = grouped[idx[k]];
+    g.plus += o.plus; g.n++; g.e = o.e;
+    if(o.note) g.notes.add(o.note);
+    g.users.add(o.e.user || "Inconnu");
+  });
+  out.length = 0;
+  grouped.forEach(g => out.push(g));
+  out.sort((x, y) => x.e.name.localeCompare(y.e.name, "fr", {sensitivity:"base"}) || ts(x.e) - ts(y.e));
+  const rows = out.map(o => [fmtDay(o.e.timestamp), o.e.name, "+" + o.plus]);
   const total = out.reduce((a, o) => a + o.plus, 0);
   const days = new Set(rows.map(r => r[0])).size;
   return {
     kind: "in",
-    title: "Entrées de stock par date",
+    title: "Entrées de stock",
     file: "entrees-fournitures-" + todayIso(),
-    header: ["Date", "Produit", "Avant", "Entrée", "Après", "Qui", "Remarque"],
+    header: ["Date", "Produit", "Entrée"],
     rows,
-    summary: rows.length ? `${rows.length} entrées sur ${days} jour(s) · ${total} unités ajoutées` + (unknown ? ` · ${unknown} produit(s) sans stock antérieur connu ignoré(s)` : "") : "Aucune entrée de stock dans l'historique",
-    numCols: [2, 3, 4],
+    total,
+    summary: rows.length ? `${rows.length} produits · ${total} unités ajoutées · ${days} jour(s)` + (unknown ? ` · ${unknown} produit(s) sans stock antérieur connu ignoré(s)` : "") : "Aucune entrée de stock sur la période",
+    numCols: [2],
     rowState: () => ""
   };
 }
 
+function entriesHtml(ds){
+  const label = {today: "aujourd'hui", week: "7 derniers jours", all: "tout l'historique"}[entriesPeriod];
+  const cell = "padding:8px 6px; border-bottom:1px solid #ccc;";
+  const th = (t, a) => `<th style="text-align:${a || "left"}; border-bottom:2px solid #333; padding:6px;">${t}</th>`;
+  const showDate = new Set(ds.rows.map(r => r[0])).size > 1;
+  const body = ds.rows.map(r => `<tr style="page-break-inside:avoid;">
+      ${showDate ? `<td style="${cell} color:#555;">${esc(r[0])}</td>` : ""}
+      <td style="${cell}">${esc(r[1])}</td>
+      <td style="${cell} text-align:right; font-weight:700; font-size:15px;">${esc(r[2])}</td>
+    </tr>`).join("");
+  return `
+    <h2 style="font-family:sans-serif; margin:0 0 4px;">Entrées de stock — Fournitures de bureau EAFC</h2>
+    <p style="font-family:sans-serif; font-size:12px; color:#555; margin:0 0 12px;">Période : ${esc(label)} · exporté le ${esc(fmtDateTime(new Date()))}</p>
+    <table style="width:100%; border-collapse:collapse; font-family:sans-serif; font-size:13.5px;">
+      <thead><tr>${showDate ? th("Date") : ""}${th("Produit")}${th("Entrée", "right")}</tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td colspan="${showDate ? 2 : 1}" style="padding:10px 6px; font-weight:700; text-align:right;">Total entré</td><td style="padding:10px 6px; font-weight:700; text-align:right; font-size:15px;">+${ds.total}</td></tr></tfoot>
+    </table>`;
+}
+
 function reportHtml(ds){
+  if(ds.kind === "in") return entriesHtml(ds);
   const who = getUsername() || "—";
   const th = ds.header.map((h, i) => `<th style="text-align:${ds.numCols.includes(i) ? "right" : "left"}; border-bottom:2px solid #333; padding:6px 5px;">${esc(h)}</th>`).join("");
   const body = ds.rows.map(r => {
@@ -2114,7 +2116,7 @@ function readableText(ds){
   }
   if(ds.kind === "in"){
     return ds.title + " — " + fmtDateTime(new Date()) + "\n" + ds.summary + "\n\n" +
-      ds.rows.map(r => `${r[0]} · ${r[1]} : ${r[2]} → ${r[4]} (${r[3]}) · ${r[5]}`).join("\n");
+      ds.rows.map(r => `${r[1]} : ${r[2]}`).join("\n");
   }
   return ds.title + " — " + fmtDateTime(new Date()) + "\n" + ds.summary + "\n\n" +
     ds.rows.map(r => `${r[0]} · ${r[1]} · ${r[2]} ${r[3]}` + (r[4] !== "" ? ` → stock ${r[4]}` : "") + (r[5] !== "" ? ` (${r[5]})` : "")).join("\n");
@@ -2175,20 +2177,24 @@ async function runExport(kind, act){
 
 function openExportSheet(){
   const canHist = HISTORY_USERS.includes(getUsername());
-  const group = (kind, title, desc) => `
+  const group = (kind, title, desc, extra) => `
     <div class="exp-group">
       <h3>${title}</h3>
-      <div class="exp-desc">${desc}</div>
+      <div class="exp-desc">${desc}</div>${extra || ""}
       <div class="exp-actions">
         <button class="exp-btn" data-kind="${kind}" data-act="print">🖨<br>Imprimer / PDF</button>
         <button class="exp-btn" data-kind="${kind}" data-act="csv">📊<br>Tableur (.csv)</button>
         <button class="exp-btn" data-kind="${kind}" data-act="share">📤<br>Partager</button>
       </div>
     </div>`;
+  const periodSel = `<div class="exp-desc" style="margin:-4px 0 8px;">Période : <select id="entriesPeriod" style="font-size:13px; padding:3px 6px; border:1px solid var(--line); border-radius:6px;">
+      <option value="today">Aujourd'hui</option><option value="week">7 derniers jours</option><option value="all">Tout l'historique</option></select></div>`;
   const body = document.getElementById("exportBody");
   body.innerHTML =
     group("inv", "Inventaire actuel", "Produit, stock, cible, quantité à commander et état.") +
-    (canHist ? group("in", "Entrées de stock par date", "Produits rentrés (variation positive) par date, avec le stock d'avant.") + group("hist", "Historique des modifications", "Date, qui, action, produit, stock, variation (jusqu'à 1000 dernières).") : "");
+    (canHist ? group("in", "Entrées de stock (à comparer au bon de livraison)", "Seulement les quantités ajoutées, par produit : +10, +20… avec le total. Pas de stock restant.", periodSel) + group("hist", "Historique des modifications", "Date, qui, action, produit, stock, variation (jusqu'à 1000 dernières).") : "");
+  const ps = document.getElementById("entriesPeriod");
+  if(ps){ ps.value = entriesPeriod; ps.onchange = () => { entriesPeriod = ps.value; }; }
   body.querySelectorAll("[data-act]").forEach(btn => {
     btn.onclick = async () => {
       btn.disabled = true;
